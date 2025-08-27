@@ -56,6 +56,7 @@ func main() {
 	changelogFile := flag.String("changelog", "CHANGELOG.md", "Path to CHANGELOG.md file")
 	skipPull := flag.Bool("skip-pull", false, "Skip git pull --tags")
 	catchUp := flag.Bool("catch-up", false, "Add missing tags to CHANGELOG")
+	autoYes := flag.Bool("yes", false, "Automatically accept all prompts")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "changelog-update: AI-powered CHANGELOG.md generator.\n\n")
@@ -162,14 +163,26 @@ func main() {
 		fmt.Println("📊 Analyzing initial release...")
 		diff, err = getGitDiff("", "HEAD")
 		if err != nil {
-			fmt.Printf("❌ Error: Failed to get git diff: %v\n", err)
-			os.Exit(1)
+			// Check if this is because there are no commits yet
+			if strings.Contains(err.Error(), "exit status 128") {
+				fmt.Println("📝 No commits found. Will generate CHANGELOG based on staged changes...")
+				diff = ""
+			} else {
+				fmt.Printf("❌ Error: Failed to get git diff: %v\n", err)
+				os.Exit(1)
+			}
 		}
 		
 		commits, err = getGitCommits("", "HEAD")
 		if err != nil {
-			fmt.Printf("❌ Error: Failed to get commit messages: %v\n", err)
-			os.Exit(1)
+			// Check if this is because there are no commits yet
+			if strings.Contains(err.Error(), "exit status 128") {
+				fmt.Println("📝 No commits found. Will generate CHANGELOG based on staged changes...")
+				commits = ""
+			} else {
+				fmt.Printf("❌ Error: Failed to get commit messages: %v\n", err)
+				os.Exit(1)
+			}
 		}
 	} else {
 		// Get the diff between tags
@@ -218,17 +231,23 @@ func main() {
 	fmt.Println(changelogEntry)
 	fmt.Println("===================================")
 
-	fmt.Print("\nDo you want to update CHANGELOG.md with this entry? [y/N]: ")
-
-	reader := bufio.NewReader(os.Stdin)
-	response, err := reader.ReadString('\n')
-	if err != nil {
-		fmt.Printf("❌ Error: Failed to read input: %v\n", err)
-		os.Exit(1)
+	var shouldUpdate bool
+	if *autoYes {
+		fmt.Println("\n✔️ Auto-accepting update (--yes flag)")
+		shouldUpdate = true
+	} else {
+		fmt.Print("\nDo you want to update CHANGELOG.md with this entry? [y/N]: ")
+		reader := bufio.NewReader(os.Stdin)
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Printf("❌ Error: Failed to read input: %v\n", err)
+			os.Exit(1)
+		}
+		response = strings.TrimSpace(strings.ToLower(response))
+		shouldUpdate = (response == "y" || response == "yes")
 	}
 
-	response = strings.TrimSpace(strings.ToLower(response))
-	if response == "y" || response == "yes" {
+	if shouldUpdate {
 		if err := updateChangelog(*changelogFile, changelogEntry); err != nil {
 			fmt.Printf("\n❌ Update failed: %v\n", err)
 			os.Exit(1)
@@ -251,8 +270,9 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 
 	// Check if this is an initial release
 	isInitialRelease := false
-	if commits != "" {
-		// Check if all files are being added (initial release pattern)
+	
+	// Check committed files first
+	if diff != "" {
 		lines := strings.Split(diff, "\n")
 		allAdded := true
 		for _, line := range lines {
@@ -265,25 +285,65 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 			isInitialRelease = true
 		}
 	}
+	
+	// If no commits, check staged files for initial release pattern
+	if commits == "" && diff == "" && stagedDiff != "" {
+		lines := strings.Split(stagedDiff, "\n")
+		allAdded := true
+		addedCount := 0
+		for _, line := range lines {
+			if line != "" {
+				if strings.HasPrefix(line, "A\t") || strings.HasPrefix(line, "new file:") {
+					addedCount++
+				} else if !strings.HasPrefix(line, "diff --git") && !strings.HasPrefix(line, "index ") && !strings.HasPrefix(line, "+++") && !strings.HasPrefix(line, "---") && !strings.HasPrefix(line, "@@") {
+					// Not a diff header, check if it's an addition
+					if !strings.HasPrefix(line, "+") {
+						allAdded = false
+						break
+					}
+				}
+			}
+		}
+		if allAdded && addedCount > 3 {
+			isInitialRelease = true
+		}
+	}
 
 	var prompt string
 	if isInitialRelease {
+		// Build content based on what we have
+		var content string
+		if commits != "" {
+			content += fmt.Sprintf(`コミットメッセージ:
+---
+%s
+---
+
+`, commits)
+		}
+		if diff != "" {
+			content += fmt.Sprintf(`追加されたファイル:
+---
+%s
+---
+
+`, diff)
+		}
+		if stagedDiff != "" {
+			content += fmt.Sprintf(`ステージング中のファイル:
+---
+%s
+---
+
+`, stagedDiff)
+		}
+		
 		prompt = fmt.Sprintf(`これは初回リリースです。以下の情報に基づいて、Keep a Changelog形式でCHANGELOG.mdのエントリーを生成してください。
 
 新しいバージョンタグ: %s
 日付: %s
 
-コミットメッセージ:
----
-%s
----
-
-追加されたファイル:
----
-%s
----
-
-以下の形式でCHANGELOGエントリーを生成してください（見出しレベル2から開始）:
+%s以下の形式でCHANGELOGエントリーを生成してください（見出しレベル2から開始）:
 ## [%s] - %s
 
 ### 追加
@@ -298,7 +358,7 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 - CHANGELOGエントリー本文のみを出力してください
 - 各項目は日本語で記述し、人間が読みやすい形式にしてください
 - プロジェクトの目的や主要機能を明確に記載してください
-- ファイル構成から推測できる技術スタックも記載してください`, newTag, today, commits, diff, newTag, today)
+- ファイル構成から推測できる技術スタックも記載してください`, newTag, today, content, newTag, today)
 	} else {
 		// Build staged diff section if present
 		stagedSection := ""
