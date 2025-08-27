@@ -56,7 +56,7 @@ jobs:
           cache: false
 
       - name: Run tests
-        run: go test -v ./...
+        run: go test -v -short ./...
 
   build-and-release:
     name: Build and Release

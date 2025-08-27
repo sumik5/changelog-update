@@ -61,7 +61,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "changelog-update: AI-powered CHANGELOG.md generator.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage:\n")
 		fmt.Fprintf(os.Stderr, "  changelog-update --tag v1.0.3 [flags]\n")
-		fmt.Fprintf(os.Stderr, "  changelog-update --catch-up [flags]\n\n")
+		fmt.Fprintf(os.Stderr, "  changelog-update --catch-up [flags]\n")
+		fmt.Fprintf(os.Stderr, "  changelog-update --catch-up --tag v1.0.3 [flags]\n\n")
 		fmt.Fprintf(os.Stderr, "Flags:\n")
 		flag.PrintDefaults()
 	}
@@ -83,7 +84,7 @@ func main() {
 	}
 
 	if !*catchUp && *newTag == "" {
-		fmt.Println("❌ Error: --tag flag is required (or use --catch-up)")
+		fmt.Println("❌ Error: --tag flag is required (or use --catch-up, or both)")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -110,7 +111,11 @@ func main() {
 			fmt.Printf("❌ Error during catch-up: %v\n", err)
 			os.Exit(1)
 		}
-		os.Exit(0)
+		// If --tag is also specified, continue to process the new tag
+		if *newTag == "" {
+			os.Exit(0)
+		}
+		fmt.Println() // Add a blank line between catch-up and new tag processing
 	}
 
 	// Normal mode - generate entry for new tag
@@ -150,7 +155,7 @@ func main() {
 		fmt.Printf("📌 Previous tag: %s\n", previousTag)
 	}
 
-	var diff, commits string
+	var diff, commits, stagedDiff string
 	
 	if previousTag == "" {
 		// First release - get all files and commits
@@ -182,13 +187,22 @@ func main() {
 		}
 	}
 
-	if diff == "" && commits == "" {
-		fmt.Println("✅ No changes since last tag. Nothing to do.")
+	// Get staged changes
+	stagedDiff, err = getStagedDiff()
+	if err != nil {
+		fmt.Printf("⚠️  Warning: Failed to get staged diff: %v\n", err)
+		stagedDiff = ""
+	} else if stagedDiff != "" {
+		fmt.Println("📝 Including staged changes in CHANGELOG...")
+	}
+
+	if diff == "" && commits == "" && stagedDiff == "" {
+		fmt.Println("✅ No changes since last tag and no staged changes. Nothing to do.")
 		os.Exit(0)
 	}
 
 	// Generate CHANGELOG entry
-	changelogEntry, err := generateChangelogEntry(executor, *newTag, diff, commits)
+	changelogEntry, err := generateChangelogEntry(executor, *newTag, diff, commits, stagedDiff)
 	if err != nil {
 		fmt.Printf("❌ Error: Failed to generate changelog entry: %v\n", err)
 		os.Exit(1)
@@ -232,7 +246,7 @@ func main() {
 	}
 }
 
-func generateChangelogEntry(executor AIExecutor, newTag, diff, commits string) (string, error) {
+func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDiff string) (string, error) {
 	today := time.Now().Format("2006-01-02")
 
 	// Check if this is an initial release
@@ -254,7 +268,7 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits string) (
 
 	var prompt string
 	if isInitialRelease {
-		prompt = fmt.Sprintf(`これは初回リリースです。以下の情報に基づいて、CHANGELOG.mdのエントリーを生成してください。
+		prompt = fmt.Sprintf(`これは初回リリースです。以下の情報に基づいて、Keep a Changelog形式でCHANGELOG.mdのエントリーを生成してください。
 
 新しいバージョンタグ: %s
 日付: %s
@@ -272,18 +286,32 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits string) (
 以下の形式でCHANGELOGエントリーを生成してください（見出しレベル2から開始）:
 ## [%s] - %s
 
-### 追加
+### Added
+
 - 初回リリース
 - プロジェクトの主要な機能や特徴を箇条書きで記載
 
 注意事項：
+- 各セクションヘッダー（### Added など）の後には必ず空行を入れてください
+- Keep a Changelog (https://keepachangelog.com) の原則に従ってください
 - 前置きや説明文は一切含めないでください
 - CHANGELOGエントリー本文のみを出力してください
-- 日本語で記述してください
+- 各項目は日本語で記述し、人間が読みやすい形式にしてください
 - プロジェクトの目的や主要機能を明確に記載してください
 - ファイル構成から推測できる技術スタックも記載してください`, newTag, today, commits, diff, newTag, today)
 	} else {
-		prompt = fmt.Sprintf(`以下のgitの差分情報とコミットメッセージに基づいて、CHANGELOG.mdのエントリーを生成してください。
+		// Build staged diff section if present
+		stagedSection := ""
+		if stagedDiff != "" {
+			stagedSection = fmt.Sprintf(`
+ステージング中の変更（まだコミットされていない）:
+---
+%s
+---
+`, stagedDiff)
+		}
+
+		prompt = fmt.Sprintf(`以下のgitの差分情報とコミットメッセージに基づいて、Keep a Changelog形式でCHANGELOG.mdのエントリーを生成してください。
 
 新しいバージョンタグ: %s
 日付: %s
@@ -293,65 +321,148 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits string) (
 %s
 ---
 
-差分情報:
+差分情報（コミット済み）:
 ---
 %s
 ---
-
+%s
 以下の形式でCHANGELOGエントリーを生成してください（見出しレベル2から開始）:
 ## [%s] - %s
 
-### 追加
-- 新機能やファイルの追加
+セクションは以下の順序で、該当する変更がある場合のみ記載してください：
+### Added
 
-### 変更
-- 既存機能の変更や改善
+- 新機能について記載
 
-### 修正
-- バグ修正
+### Changed
 
-### 削除
-- 削除された機能
+- 既存機能への変更について記載
+
+### Deprecated
+
+- 間もなく削除される機能について記載
+
+### Removed
+
+- 削除された機能について記載
+
+### Fixed
+
+- 修正されたバグについて記載
+
+### Security
+
+- 脆弱性に関する変更について記載
 
 注意事項：
+- 各セクションヘッダー（### Added など）の後には必ず空行を入れてください
+- Keep a Changelog (https://keepachangelog.com/ja/1.1.0/) の原則に従ってください
+- 人間が読みやすいことを最優先にしてください
 - 前置きや説明文は一切含めないでください
 - CHANGELOGエントリー本文のみを出力してください
 - 該当する変更がないカテゴリは出力しないでください
-- 日本語で記述してください
-- 変更内容は具体的で分かりやすく記述してください
-- 差分から重要な変更を抽出してください`, newTag, today, commits, diff, newTag, today)
+- 各項目は日本語で記述し、ユーザーにとって価値のある情報を具体的に記載してください
+- 変更の影響や理由が分かるように記述してください
+- コミット済みの変更とステージング中の変更を統合して記載してください
+- 技術的な詳細よりも、ユーザーへの影響を重視してください`, newTag, today, commits, diff, stagedSection, newTag, today)
 	}
 
-	return executor.Execute(prompt)
+	result, err := executor.Execute(prompt)
+	if err != nil {
+		return "", err
+	}
+	
+	// Ensure the entry ends with a newline
+	if !strings.HasSuffix(result, "\n") {
+		result += "\n"
+	}
+	
+	return result, nil
 }
 
 func updateChangelog(filename, entry string) error {
+	// Extract version from the new entry
+	versionPattern := regexp.MustCompile(`^##\s+\[([^\]]+)\]`)
+	newVersionMatch := versionPattern.FindStringSubmatch(entry)
+	var newVersion string
+	if len(newVersionMatch) > 1 {
+		newVersion = newVersionMatch[1]
+	}
+
 	// Read existing CHANGELOG.md
 	content, err := os.ReadFile(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// Create new CHANGELOG.md if it doesn't exist
-			newContent := "# Changelog\n\nこのプロジェクトの主要な変更履歴です。\n\n" + entry + "\n"
+			header := "# Changelog\n\n"
+			newContent := header + entry + "\n"
 			return os.WriteFile(filename, []byte(newContent), 0644)
 		}
 		return err
 	}
 
-	// Find the position after the header and before the first version entry
 	lines := strings.Split(string(content), "\n")
+	
+	// Check if the same version already exists and find its position
+	existingVersionStart := -1
+	existingVersionEnd := -1
 	insertPos := -1
-
-	// Find where to insert (after initial header text, before first version entry)
-	versionPattern := regexp.MustCompile(`^##\s+\[`)
+	inExistingVersion := false
+	
 	for i, line := range lines {
 		if versionPattern.MatchString(line) {
-			insertPos = i
-			break
+			matches := versionPattern.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				if matches[1] == newVersion && existingVersionStart == -1 {
+					// Found the same version
+					existingVersionStart = i
+					inExistingVersion = true
+					fmt.Printf("📝 Found existing entry for version %s, replacing it...\n", newVersion)
+				} else if inExistingVersion {
+					// Found the next version entry, mark the end of existing version
+					existingVersionEnd = i
+					inExistingVersion = false
+				}
+				
+				// Mark the first version position for insertion
+				if insertPos == -1 {
+					insertPos = i
+				}
+			}
 		}
+	}
+	
+	// If we were in an existing version and didn't find another version, 
+	// the existing version goes to the end of the file
+	if inExistingVersion && existingVersionEnd == -1 {
+		existingVersionEnd = len(lines)
 	}
 
 	var newContent string
-	if insertPos == -1 {
+	
+	if existingVersionStart != -1 {
+		// Replace existing version entry
+		var newLines []string
+		
+		// Add lines before the existing version
+		if existingVersionStart > 0 {
+			newLines = append(newLines, lines[:existingVersionStart]...)
+		}
+		
+		// Add the new entry
+		newLines = append(newLines, strings.Split(entry, "\n")...)
+		
+		// Add lines after the existing version
+		if existingVersionEnd < len(lines) && existingVersionEnd != -1 {
+			// Add an empty line for separation if needed
+			if existingVersionEnd > 0 && strings.TrimSpace(lines[existingVersionEnd-1]) != "" {
+				newLines = append(newLines, "")
+			}
+			newLines = append(newLines, lines[existingVersionEnd:]...)
+		}
+		
+		newContent = strings.Join(newLines, "\n")
+	} else if insertPos == -1 {
 		// No existing versions, append at the end
 		newContent = string(content) + "\n" + entry + "\n"
 	} else {
@@ -439,6 +550,15 @@ func pullTags() error {
 		}
 	}
 	return nil
+}
+
+func getStagedDiff() (string, error) {
+	cmd := exec.Command("git", "diff", "--cached", "--name-status")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
 }
 
 func catchUpMode(executor AIExecutor, changelogFile string) error {
@@ -628,7 +748,19 @@ func generateChangelogEntryForTag(executor AIExecutor, tag, diff, commits string
 		date = time.Now().Format("2006-01-02")
 	}
 
-	prompt := fmt.Sprintf(`以下のgitの差分情報とコミットメッセージに基づいて、CHANGELOG.mdのエントリーを生成してください。
+	// Also check for staged changes
+	stagedDiff, _ := getStagedDiff()
+	stagedSection := ""
+	if stagedDiff != "" {
+		stagedSection = fmt.Sprintf(`
+
+ステージング中の変更（まだコミットされていない）:
+---
+%s
+---`, stagedDiff)
+	}
+
+	prompt := fmt.Sprintf(`以下のgitの差分情報とコミットメッセージに基づいて、Keep a Changelog形式でCHANGELOG.mdのエントリーを生成してください。
 
 バージョンタグ: %s
 日付: %s
@@ -641,32 +773,59 @@ func generateChangelogEntryForTag(executor AIExecutor, tag, diff, commits string
 差分情報:
 ---
 %s
----
+---%s
 
 以下の形式でCHANGELOGエントリーを生成してください（見出しレベル2から開始）:
 ## [%s] - %s
 
-### 追加
-- 新機能やファイルの追加
+セクションは以下の順序で、該当する変更がある場合のみ記載してください：
+### Added
 
-### 変更
-- 既存機能の変更や改善
+- 新機能について記載
 
-### 修正
-- バグ修正
+### Changed
 
-### 削除
-- 削除された機能
+- 既存機能への変更について記載
+
+### Deprecated
+
+- 間もなく削除される機能について記載
+
+### Removed
+
+- 削除された機能について記載
+
+### Fixed
+
+- 修正されたバグについて記載
+
+### Security
+
+- 脆弱性に関する変更について記載
 
 注意事項：
+- 各セクションヘッダー（### Added など）の後には必ず空行を入れてください
+- Keep a Changelog (https://keepachangelog.com/ja/1.1.0/) の原則に従ってください
+- 人間が読みやすいことを最優先にしてください
 - 前置きや説明文は一切含めないでください
 - CHANGELOGエントリー本文のみを出力してください
 - 該当する変更がないカテゴリは出力しないでください
-- 日本語で記述してください
-- 変更内容は具体的で分かりやすく記述してください
-- 差分から重要な変更を抽出してください`, tag, date, commits, diff, tag, date)
+- 各項目は日本語で記述し、ユーザーにとって価値のある情報を具体的に記載してください
+- 変更の影響や理由が分かるように記述してください
+- ステージング中の変更も含めて記載してください
+- 技術的な詳細よりも、ユーザーへの影響を重視してください`, tag, date, commits, diff, stagedSection, tag, date)
 
-	return executor.Execute(prompt)
+	result, err := executor.Execute(prompt)
+	if err != nil {
+		return "", err
+	}
+	
+	// Ensure the entry ends with a newline
+	if !strings.HasSuffix(result, "\n") {
+		result += "\n"
+	}
+	
+	return result, nil
 }
 
 func getTagDate(tag string) (string, error) {
