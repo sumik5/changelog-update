@@ -46,6 +46,12 @@ var newExecutor = func(model string) (AIExecutor, error) {
 
 var version = "dev" // Can be set during build
 
+const (
+	responseYes = "yes"
+	responseY   = "y"
+	gitRefHEAD  = "HEAD"
+)
+
 func main() {
 	model := flag.String("model", "claude", "AI model to use (currently only claude)")
 	modelShort := flag.String("m", "", "AI model to use (shorthand for -model)")
@@ -108,8 +114,8 @@ func main() {
 
 	// Handle catch-up mode
 	if *catchUp {
-		if err := catchUpMode(executor, *changelogFile); err != nil {
-			fmt.Printf("❌ Error during catch-up: %v\n", err)
+		if catchUpErr := catchUpMode(executor, *changelogFile); catchUpErr != nil {
+			fmt.Printf("❌ Error during catch-up: %v\n", catchUpErr)
 			os.Exit(1)
 		}
 		// If --tag is also specified, continue to process the new tag
@@ -121,22 +127,19 @@ func main() {
 
 	// Normal mode - generate entry for new tag
 	// Get the latest tag
-	previousTag, err := getLatestTag()
-	if err != nil {
-		fmt.Printf("❌ Error: Failed to get latest tag: %v\n", err)
-		os.Exit(1)
-	}
+	previousTag := getLatestTag()
 
 	// Check if new tag already exists
 	if previousTag == *newTag {
 		fmt.Printf("⚠️  Tag %s already exists. Generating CHANGELOG from previous tag.\n", *newTag)
 		// Find the tag before the current one
-		allTags, err := getAllTags()
+		var allTags []string
+		allTags, err = getAllTags()
 		if err != nil {
 			fmt.Printf("❌ Error: Failed to get all tags: %v\n", err)
 			os.Exit(1)
 		}
-		
+
 		// Find the tag before newTag
 		for i, tag := range allTags {
 			if tag == *newTag && i > 0 {
@@ -157,11 +160,11 @@ func main() {
 	}
 
 	var diff, commits, stagedDiff string
-	
+
 	if previousTag == "" {
 		// First release - get all files and commits
 		fmt.Println("📊 Analyzing initial release...")
-		diff, err = getGitDiff("", "HEAD")
+		diff, err = getGitDiff("", gitRefHEAD)
 		if err != nil {
 			// Check if this is because there are no commits yet
 			if strings.Contains(err.Error(), "exit status 128") {
@@ -172,8 +175,8 @@ func main() {
 				os.Exit(1)
 			}
 		}
-		
-		commits, err = getGitCommits("", "HEAD")
+
+		commits, err = getGitCommits("", gitRefHEAD)
 		if err != nil {
 			// Check if this is because there are no commits yet
 			if strings.Contains(err.Error(), "exit status 128") {
@@ -244,7 +247,7 @@ func main() {
 			os.Exit(1)
 		}
 		response = strings.TrimSpace(strings.ToLower(response))
-		shouldUpdate = (response == "y" || response == "yes")
+		shouldUpdate = (response == responseY || response == responseYes)
 	}
 
 	if shouldUpdate {
@@ -260,7 +263,7 @@ func main() {
 		fmt.Printf("  4. git tag %s\n", *newTag)
 		fmt.Printf("  5. git push && git push --tags\n")
 	} else {
-		fmt.Println("\n⏹️ Update cancelled.")
+		fmt.Println("\n⏹️ Update canceled.")
 		os.Exit(0)
 	}
 }
@@ -270,7 +273,7 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 
 	// Check if this is an initial release
 	isInitialRelease := false
-	
+
 	// Check committed files first
 	if diff != "" {
 		lines := strings.Split(diff, "\n")
@@ -285,7 +288,7 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 			isInitialRelease = true
 		}
 	}
-	
+
 	// If no commits, check staged files for initial release pattern
 	if commits == "" && diff == "" && stagedDiff != "" {
 		lines := strings.Split(stagedDiff, "\n")
@@ -337,7 +340,7 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 
 `, stagedDiff)
 		}
-		
+
 		prompt = fmt.Sprintf(`これは初回リリースです。以下の情報に基づいて、Keep a Changelog形式でCHANGELOG.mdのエントリーを生成してください。
 
 新しいバージョンタグ: %s
@@ -431,8 +434,7 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 	if err != nil {
 		return "", err
 	}
-	
-	
+
 	return result, nil
 }
 
@@ -452,19 +454,19 @@ func updateChangelog(filename, entry string) error {
 			// Create new CHANGELOG.md if it doesn't exist
 			header := "# Changelog\n\n"
 			newContent := header + entry + "\n"
-			return os.WriteFile(filename, []byte(newContent), 0644)
+			return os.WriteFile(filename, []byte(newContent), 0o644)
 		}
 		return err
 	}
 
 	lines := strings.Split(string(content), "\n")
-	
+
 	// Check if the same version already exists and find its position
 	existingVersionStart := -1
 	existingVersionEnd := -1
 	insertPos := -1
 	inExistingVersion := false
-	
+
 	for i, line := range lines {
 		if versionPattern.MatchString(line) {
 			matches := versionPattern.FindStringSubmatch(line)
@@ -479,7 +481,7 @@ func updateChangelog(filename, entry string) error {
 					existingVersionEnd = i
 					inExistingVersion = false
 				}
-				
+
 				// Mark the first version position for insertion
 				if insertPos == -1 {
 					insertPos = i
@@ -487,27 +489,27 @@ func updateChangelog(filename, entry string) error {
 			}
 		}
 	}
-	
-	// If we were in an existing version and didn't find another version, 
+
+	// If we were in an existing version and didn't find another version,
 	// the existing version goes to the end of the file
 	if inExistingVersion && existingVersionEnd == -1 {
 		existingVersionEnd = len(lines)
 	}
 
 	var newContent string
-	
+
 	if existingVersionStart != -1 {
 		// Replace existing version entry
 		var newLines []string
-		
+
 		// Add lines before the existing version
 		if existingVersionStart > 0 {
 			newLines = append(newLines, lines[:existingVersionStart]...)
 		}
-		
+
 		// Add the new entry
 		newLines = append(newLines, strings.Split(entry, "\n")...)
-		
+
 		// Add lines after the existing version
 		if existingVersionEnd < len(lines) && existingVersionEnd != -1 {
 			// Add an empty line for separation if needed
@@ -516,7 +518,7 @@ func updateChangelog(filename, entry string) error {
 			}
 			newLines = append(newLines, lines[existingVersionEnd:]...)
 		}
-		
+
 		newContent = strings.Join(newLines, "\n")
 	} else if insertPos == -1 {
 		// No existing versions, append at the end
@@ -528,22 +530,22 @@ func updateChangelog(filename, entry string) error {
 		newContent = before + "\n" + entry + "\n\n" + after
 	}
 
-	return os.WriteFile(filename, []byte(newContent), 0644)
+	return os.WriteFile(filename, []byte(newContent), 0o644)
 }
 
-func getLatestTag() (string, error) {
+func getLatestTag() string {
 	cmd := exec.Command("git", "describe", "--tags", "--abbrev=0")
 	output, err := cmd.Output()
 	if err != nil {
 		// No tags exist yet
-		return "", nil
+		return ""
 	}
-	return strings.TrimSpace(string(output)), nil
+	return strings.TrimSpace(string(output))
 }
 
 func getGitDiff(fromTag, toTag string) (string, error) {
 	var cmd *exec.Cmd
-	if fromTag == "" || fromTag == "HEAD" {
+	if fromTag == "" || fromTag == gitRefHEAD {
 		// First release, get all files
 		cmd = exec.Command("git", "ls-files")
 		output, err := cmd.Output()
@@ -572,7 +574,7 @@ func getGitDiff(fromTag, toTag string) (string, error) {
 
 func getGitCommits(fromTag, toTag string) (string, error) {
 	var cmd *exec.Cmd
-	if fromTag == "" || fromTag == "HEAD" {
+	if fromTag == "" || fromTag == gitRefHEAD {
 		// First release, get all commits
 		cmd = exec.Command("git", "log", "--oneline", toTag)
 	} else {
@@ -593,7 +595,7 @@ func pullTags() error {
 	if err != nil {
 		// If fetch fails, try pull (might work if tracking is set up)
 		cmd = exec.Command("git", "pull", "--tags")
-		output, err = cmd.CombinedOutput()
+		_, err = cmd.CombinedOutput()
 		if err != nil {
 			// Check if this is just a warning about no tracking info
 			outputStr := string(output)
@@ -670,13 +672,13 @@ func catchUpMode(executor AIExecutor, changelogFile string) error {
 	}
 
 	response = strings.TrimSpace(strings.ToLower(response))
-	if response != "y" && response != "yes" {
-		fmt.Println("⏹️ Catch-up cancelled.")
+	if response != responseY && response != responseYes {
+		fmt.Println("⏹️ Catch-up canceled.")
 		return nil
 	}
 
 	// Process each missing tag
-	var allEntries []string
+	allEntries := make([]string, 0, len(missingTags))
 	for i, tag := range missingTags {
 		fmt.Printf("\n🔧 Processing %s (%d/%d)...\n", tag, i+1, len(missingTags))
 
@@ -694,24 +696,27 @@ func catchUpMode(executor AIExecutor, changelogFile string) error {
 		}
 
 		if previousTag == "" {
-			previousTag = "HEAD"
+			previousTag = gitRefHEAD
 		}
 
 		// Get diff and commits
-		diff, err := getGitDiff(previousTag, tag)
+		var diff string
+		diff, err = getGitDiff(previousTag, tag)
 		if err != nil {
 			fmt.Printf("⚠️  Warning: Failed to get diff for %s: %v\n", tag, err)
 			continue
 		}
 
-		commits, err := getGitCommits(previousTag, tag)
+		var commits string
+		commits, err = getGitCommits(previousTag, tag)
 		if err != nil {
 			fmt.Printf("⚠️  Warning: Failed to get commits for %s: %v\n", tag, err)
 			continue
 		}
 
 		// Generate changelog entry with tag date
-		entry, err := generateChangelogEntryForTag(executor, tag, diff, commits)
+		var entry string
+		entry, err = generateChangelogEntryForTag(executor, tag, diff, commits)
 		if err != nil {
 			fmt.Printf("⚠️  Warning: Failed to generate entry for %s: %v\n", tag, err)
 			continue
@@ -746,7 +751,7 @@ func catchUpMode(executor AIExecutor, changelogFile string) error {
 		}
 		fmt.Println("\n✅ CHANGELOG.md updated successfully!")
 	} else {
-		fmt.Println("\n⏹️ Update cancelled.")
+		fmt.Println("\n⏹️ Update canceled.")
 	}
 
 	return nil
@@ -805,7 +810,11 @@ func generateChangelogEntryForTag(executor AIExecutor, tag, diff, commits string
 	}
 
 	// Also check for staged changes
-	stagedDiff, _ := getStagedDiff()
+	stagedDiff, err := getStagedDiff()
+	if err != nil {
+		fmt.Printf("⚠️ Warning: Failed to get staged diff: %v\n", err)
+		stagedDiff = ""
+	}
 	stagedSection := ""
 	if stagedDiff != "" {
 		stagedSection = fmt.Sprintf(`
@@ -875,8 +884,7 @@ func generateChangelogEntryForTag(executor AIExecutor, tag, diff, commits string
 	if err != nil {
 		return "", err
 	}
-	
-	
+
 	return result, nil
 }
 

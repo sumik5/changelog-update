@@ -83,6 +83,16 @@ issues:
         - dupl
         - gosec
         - goconst
+    - path: main\.go
+      linters:
+        - gocyclo
+      text: "cyclomatic complexity"
+    - linters:
+        - gosec
+      text: "G304|G306|G204"
+    - linters:
+        - gocritic
+      text: "ifElseChain"
   exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0

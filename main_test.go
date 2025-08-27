@@ -301,7 +301,7 @@ This is the changelog.
 
 			// Write existing content if provided
 			if tt.existingContent != "" {
-				if err := os.WriteFile(tempFile, []byte(tt.existingContent), 0644); err != nil {
+				if err := os.WriteFile(tempFile, []byte(tt.existingContent), 0o644); err != nil {
 					t.Fatalf("Failed to write test file: %v", err)
 				}
 			}
@@ -325,7 +325,7 @@ This is the changelog.
 					t.Errorf("Updated changelog does not contain %q\nActual content:\n%s", want, string(content))
 				}
 			}
-			
+
 			// Check that unwanted strings are not present
 			for _, notWant := range tt.wantNotContains {
 				if strings.Contains(string(content), notWant) {
@@ -392,7 +392,7 @@ This is a new changelog.`,
 		t.Run(tt.name, func(t *testing.T) {
 			// Create temp file
 			tempFile := t.TempDir() + "/CHANGELOG.md"
-			if err := os.WriteFile(tempFile, []byte(tt.content), 0644); err != nil {
+			if err := os.WriteFile(tempFile, []byte(tt.content), 0o644); err != nil {
 				t.Fatalf("Failed to write test file: %v", err)
 			}
 
@@ -467,10 +467,10 @@ func TestNewExecutor(t *testing.T) {
 func TestClaudeExecutorErrorHandling(t *testing.T) {
 	// Test ClaudeExecutor structure without actually calling claude CLI
 	executor := &ClaudeExecutor{}
-	
+
 	// Test that the executor implements the interface
 	var _ AIExecutor = executor
-	
+
 	// This test verifies the structure and interface implementation
 	// Actual command execution is tested in integration tests only
 }
@@ -488,7 +488,7 @@ More text.
 - Feature`
 
 		tempFile := t.TempDir() + "/CHANGELOG.md"
-		if err := os.WriteFile(tempFile, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(tempFile, []byte(content), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
@@ -503,7 +503,7 @@ More text.
 
 		updated, _ := os.ReadFile(tempFile)
 		lines := strings.Split(string(updated), "\n")
-		
+
 		// Find the position of new entry
 		var v1Index, v09Index int
 		for i, line := range lines {
@@ -514,7 +514,7 @@ More text.
 				v09Index = i
 			}
 		}
-		
+
 		if v1Index == 0 || v09Index == 0 {
 			t.Error("Could not find version entries")
 		}
@@ -528,22 +528,22 @@ func TestGenerateChangelogEntryPromptContent(t *testing.T) {
 	executor := &MockExecutor{
 		response: "## [v1.0.0] - 2025-08-27\n### 追加\n- Test",
 	}
-	
+
 	tag := "v1.0.0"
 	diff := "A\tfile.go"
 	commits := "abc123 feat: test"
-	
+
 	_, err := generateChangelogEntry(executor, tag, diff, commits, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	
+
 	if len(executor.prompts) != 1 {
 		t.Fatalf("Expected 1 prompt, got %d", len(executor.prompts))
 	}
-	
+
 	prompt := executor.prompts[0]
-	
+
 	// Check that prompt contains necessary information
 	expectedContents := []string{
 		tag,
@@ -555,13 +555,13 @@ func TestGenerateChangelogEntryPromptContent(t *testing.T) {
 		"修正",
 		"削除",
 	}
-	
+
 	for _, expected := range expectedContents {
 		if !strings.Contains(prompt, expected) {
 			t.Errorf("Prompt does not contain expected string: %q", expected)
 		}
 	}
-	
+
 	// Check date format in prompt (should be today's date)
 	today := time.Now().Format("2006-01-02")
 	if !strings.Contains(prompt, today) {
@@ -581,11 +581,11 @@ func TestGetTagDateFormat(t *testing.T) {
 			{"2025-01-01 00:00:00 +0000", "2025-01-01"},
 			{"2025-12-31 23:59:59 -0500", "2025-12-31"},
 		}
-		
+
 		for _, tc := range testCases {
 			parts := strings.Split(tc.input, " ")
 			if parts[0] != tc.expected {
-				t.Errorf("Date extraction failed. Input: %s, Expected: %s, Got: %s", 
+				t.Errorf("Date extraction failed. Input: %s, Expected: %s, Got: %s",
 					tc.input, tc.expected, parts[0])
 			}
 		}
@@ -594,11 +594,11 @@ func TestGetTagDateFormat(t *testing.T) {
 
 func TestVersionPatternMatching(t *testing.T) {
 	versionPattern := regexp.MustCompile(`^##\s+\[([^\]]+)\]`)
-	
+
 	testCases := []struct {
-		line     string
-		matches  bool
-		version  string
+		line    string
+		matches bool
+		version string
 	}{
 		{"## [v1.0.0] - 2025-08-27", true, "v1.0.0"},
 		{"## [1.0.0] - 2025-08-27", true, "1.0.0"},
@@ -607,7 +607,7 @@ func TestVersionPatternMatching(t *testing.T) {
 		{"## v1.0.0 - 2025-08-27", false, ""},
 		{"Some text [v1.0.0]", false, ""},
 	}
-	
+
 	for _, tc := range testCases {
 		matches := versionPattern.FindStringSubmatch(tc.line)
 		if tc.matches {
@@ -616,13 +616,11 @@ func TestVersionPatternMatching(t *testing.T) {
 				continue
 			}
 			if matches[1] != tc.version {
-				t.Errorf("Version mismatch. Line: %s, Expected: %s, Got: %s", 
+				t.Errorf("Version mismatch. Line: %s, Expected: %s, Got: %s",
 					tc.line, tc.version, matches[1])
 			}
-		} else {
-			if len(matches) > 0 {
-				t.Errorf("Pattern should not match line: %s", tc.line)
-			}
+		} else if len(matches) > 0 {
+			t.Errorf("Pattern should not match line: %s", tc.line)
 		}
 	}
 }
@@ -633,11 +631,11 @@ func TestIntegrationWithClaude(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
-	
+
 	if os.Getenv("CI") == "true" || os.Getenv("GITHUB_ACTIONS") == "true" {
 		t.Skip("Skipping Claude integration test in CI environment")
 	}
-	
+
 	// Additional integration tests can be added here
 	// These would test the actual integration with Claude CLI
 	// when running locally with proper setup
