@@ -121,25 +121,65 @@ func main() {
 		os.Exit(1)
 	}
 
-	if previousTag == "" {
-		fmt.Println("❓ No previous tags found. This will be the first release.")
-		previousTag = "HEAD"
+	// Check if new tag already exists
+	if previousTag == *newTag {
+		fmt.Printf("⚠️  Tag %s already exists. Generating CHANGELOG from previous tag.\n", *newTag)
+		// Find the tag before the current one
+		allTags, err := getAllTags()
+		if err != nil {
+			fmt.Printf("❌ Error: Failed to get all tags: %v\n", err)
+			os.Exit(1)
+		}
+		
+		// Find the tag before newTag
+		for i, tag := range allTags {
+			if tag == *newTag && i > 0 {
+				previousTag = allTags[i-1]
+				fmt.Printf("📌 Using previous tag: %s\n", previousTag)
+				break
+			} else if tag == *newTag && i == 0 {
+				// This is the first tag, treat as initial release
+				previousTag = ""
+				fmt.Println("📌 This is the first tag, treating as initial release.")
+				break
+			}
+		}
+	} else if previousTag == "" {
+		fmt.Println("📌 No previous tags found. This will be the first release.")
 	} else {
 		fmt.Printf("📌 Previous tag: %s\n", previousTag)
 	}
 
-	// Get the diff between tags
-	diff, err := getGitDiff(previousTag, "HEAD")
-	if err != nil {
-		fmt.Printf("❌ Error: Failed to get git diff: %v\n", err)
-		os.Exit(1)
-	}
+	var diff, commits string
+	
+	if previousTag == "" {
+		// First release - get all files and commits
+		fmt.Println("📊 Analyzing initial release...")
+		diff, err = getGitDiff("", "HEAD")
+		if err != nil {
+			fmt.Printf("❌ Error: Failed to get git diff: %v\n", err)
+			os.Exit(1)
+		}
+		
+		commits, err = getGitCommits("", "HEAD")
+		if err != nil {
+			fmt.Printf("❌ Error: Failed to get commit messages: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// Get the diff between tags
+		diff, err = getGitDiff(previousTag, "HEAD")
+		if err != nil {
+			fmt.Printf("❌ Error: Failed to get git diff: %v\n", err)
+			os.Exit(1)
+		}
 
-	// Get commit messages between tags
-	commits, err := getGitCommits(previousTag, "HEAD")
-	if err != nil {
-		fmt.Printf("❌ Error: Failed to get commit messages: %v\n", err)
-		os.Exit(1)
+		// Get commit messages between tags
+		commits, err = getGitCommits(previousTag, "HEAD")
+		if err != nil {
+			fmt.Printf("❌ Error: Failed to get commit messages: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	if diff == "" && commits == "" {
@@ -195,7 +235,55 @@ func main() {
 func generateChangelogEntry(executor AIExecutor, newTag, diff, commits string) (string, error) {
 	today := time.Now().Format("2006-01-02")
 
-	prompt := fmt.Sprintf(`以下のgitの差分情報とコミットメッセージに基づいて、CHANGELOG.mdのエントリーを生成してください。
+	// Check if this is an initial release
+	isInitialRelease := false
+	if commits != "" {
+		// Check if all files are being added (initial release pattern)
+		lines := strings.Split(diff, "\n")
+		allAdded := true
+		for _, line := range lines {
+			if line != "" && !strings.HasPrefix(line, "A\t") {
+				allAdded = false
+				break
+			}
+		}
+		if allAdded && len(lines) > 5 {
+			isInitialRelease = true
+		}
+	}
+
+	var prompt string
+	if isInitialRelease {
+		prompt = fmt.Sprintf(`これは初回リリースです。以下の情報に基づいて、CHANGELOG.mdのエントリーを生成してください。
+
+新しいバージョンタグ: %s
+日付: %s
+
+コミットメッセージ:
+---
+%s
+---
+
+追加されたファイル:
+---
+%s
+---
+
+以下の形式でCHANGELOGエントリーを生成してください（見出しレベル2から開始）:
+## [%s] - %s
+
+### 追加
+- 初回リリース
+- プロジェクトの主要な機能や特徴を箇条書きで記載
+
+注意事項：
+- 前置きや説明文は一切含めないでください
+- CHANGELOGエントリー本文のみを出力してください
+- 日本語で記述してください
+- プロジェクトの目的や主要機能を明確に記載してください
+- ファイル構成から推測できる技術スタックも記載してください`, newTag, today, commits, diff, newTag, today)
+	} else {
+		prompt = fmt.Sprintf(`以下のgitの差分情報とコミットメッセージに基づいて、CHANGELOG.mdのエントリーを生成してください。
 
 新しいバージョンタグ: %s
 日付: %s
@@ -232,6 +320,7 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits string) (
 - 日本語で記述してください
 - 変更内容は具体的で分かりやすく記述してください
 - 差分から重要な変更を抽出してください`, newTag, today, commits, diff, newTag, today)
+	}
 
 	return executor.Execute(prompt)
 }
@@ -287,9 +376,22 @@ func getLatestTag() (string, error) {
 
 func getGitDiff(fromTag, toTag string) (string, error) {
 	var cmd *exec.Cmd
-	if fromTag == "HEAD" {
+	if fromTag == "" || fromTag == "HEAD" {
 		// First release, get all files
-		cmd = exec.Command("git", "diff", "--name-status", "4b825dc642cb6eb9a060e54bf8d69288fbee4904", toTag)
+		cmd = exec.Command("git", "ls-files")
+		output, err := cmd.Output()
+		if err != nil {
+			return "", err
+		}
+		// Format as added files
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		var result []string
+		for _, line := range lines {
+			if line != "" {
+				result = append(result, "A\t"+line)
+			}
+		}
+		return strings.Join(result, "\n"), nil
 	} else {
 		cmd = exec.Command("git", "diff", "--name-status", fromTag, toTag)
 	}
@@ -303,7 +405,7 @@ func getGitDiff(fromTag, toTag string) (string, error) {
 
 func getGitCommits(fromTag, toTag string) (string, error) {
 	var cmd *exec.Cmd
-	if fromTag == "HEAD" {
+	if fromTag == "" || fromTag == "HEAD" {
 		// First release, get all commits
 		cmd = exec.Command("git", "log", "--oneline", toTag)
 	} else {
@@ -318,10 +420,25 @@ func getGitCommits(fromTag, toTag string) (string, error) {
 }
 
 func pullTags() error {
-	cmd := exec.Command("git", "pull", "--tags")
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	// First try git fetch --tags which doesn't require tracking info
+	cmd := exec.Command("git", "fetch", "--tags")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// If fetch fails, try pull (might work if tracking is set up)
+		cmd = exec.Command("git", "pull", "--tags")
+		output, err = cmd.CombinedOutput()
+		if err != nil {
+			// Check if this is just a warning about no tracking info
+			outputStr := string(output)
+			if strings.Contains(outputStr, "no tracking information") {
+				// This is okay, we can still work with local tags
+				fmt.Println("ℹ️  No remote tracking configured, using local tags only.")
+				return nil
+			}
+			return fmt.Errorf("failed to fetch tags: %w\nOutput: %s", err, output)
+		}
+	}
+	return nil
 }
 
 func catchUpMode(executor AIExecutor, changelogFile string) error {
