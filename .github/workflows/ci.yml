@@ -1,0 +1,177 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          args: --timeout=5m
+          skip-cache: true
+
+      - name: Run go fmt check
+        run: |
+          if [ -n "$(gofmt -l .)" ]; then
+            echo "Go code is not formatted. Run 'go fmt ./...' to fix."
+            gofmt -d .
+            exit 1
+          fi
+
+      - name: Run go vet
+        run: go vet ./...
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Run tests
+        run: go test -v ./...
+
+  build-and-release:
+    name: Build and Release
+    needs: [lint, test]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+          - os: linux
+            arch: arm64
+          - os: darwin
+            arch: amd64
+          - os: darwin
+            arch: arm64
+          - os: windows
+            arch: amd64
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: false
+
+      - name: Get version from tag
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+        run: |
+          output_name="changelog-update"
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            output_name="${output_name}.exe"
+          fi
+          go build -ldflags "-X main.version=${{ env.VERSION }}" -v -o "${output_name}" .
+
+      - name: Create zip archive
+        run: |
+          zip_name="changelog-update-${{ matrix.os }}-${{ matrix.arch }}.zip"
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            zip "${zip_name}" "changelog-update.exe" README.md LICENSE
+          else
+            zip "${zip_name}" "changelog-update" README.md LICENSE
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog-update-${{ matrix.os }}-${{ matrix.arch }}
+          path: changelog-update-${{ matrix.os }}-${{ matrix.arch }}.zip
+          retention-days: 30
+
+  create-release:
+    name: Create GitHub Release
+    needs: build-and-release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -type f -name "*.zip" -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Extract changelog for release notes
+        id: changelog
+        run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          # Extract the changelog section for this version
+          if [ -f "CHANGELOG.md" ]; then
+            awk -v tag="$TAG" '
+              /^## \[/ {
+                if (found) exit;
+                if (index($0, tag) > 0) found=1;
+              }
+              found && /^## \[/ && !first { first=1; next; }
+              found { print }
+            ' CHANGELOG.md > release_notes.md
+            
+            if [ -s release_notes.md ]; then
+              echo "Release notes extracted from CHANGELOG.md"
+              cat release_notes.md
+            else
+              echo "No specific changelog entry found for $TAG"
+              echo "See CHANGELOG.md for details" > release_notes.md
+            fi
+          else
+            echo "CHANGELOG.md not found"
+            echo "See repository for details" > release_notes.md
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          body_path: release_notes.md
+          generate_release_notes: false
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

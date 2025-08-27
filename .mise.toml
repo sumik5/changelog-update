@@ -1,0 +1,40 @@
+# mise configuration
+[tools]
+go = "1.24"
+
+[tasks.build]
+description = "Build the binary"
+run = """
+mkdir -p build
+VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+go build -ldflags "-X main.version=${VERSION}" -o build/changelog-update .
+echo "✅ Build complete: build/changelog-update"
+"""
+
+[tasks.clean]
+description = "Remove build artifacts"
+run = """
+rm -rf build
+rm -f changelog-update
+echo "🧹 Cleaned build artifacts"
+"""
+
+[tasks.install]
+description = "Install to /usr/local/bin"
+depends = ["build"]
+run = """
+sudo cp build/changelog-update /usr/local/bin/
+echo "✅ Installed to /usr/local/bin/changelog-update"
+"""
+
+[tasks.test]
+description = "Run tests"
+run = "go test -v ./..."
+
+[tasks.fmt]
+description = "Format Go code"
+run = "go fmt ./..."
+
+[tasks.lint]
+description = "Lint Go code"
+run = "go vet ./..."

@@ -1,0 +1,103 @@
+name: Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  test:
+    name: Unit Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go: ['1.21', '1.22']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest' && matrix.go == '1.22'
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Create test repository
+        run: |
+          mkdir -p test-repo
+          cd test-repo
+          git init
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          
+          # Create initial commit
+          echo "# Test Repo" > README.md
+          git add README.md
+          git commit -m "Initial commit"
+          
+          # Create some test commits and tags
+          echo "Feature 1" >> feature.txt
+          git add feature.txt
+          git commit -m "feat: add feature 1"
+          git tag v1.0.0
+          
+          echo "Feature 2" >> feature.txt
+          git add feature.txt
+          git commit -m "feat: add feature 2"
+          
+          echo "Fix 1" >> fix.txt
+          git add fix.txt
+          git commit -m "fix: fix bug 1"
+          git tag v1.0.1
+          
+          echo "Feature 3" >> feature.txt
+          git add feature.txt
+          git commit -m "feat: add feature 3"
+
+      - name: Build changelog-update
+        run: go build -o changelog-update .
+
+      - name: Test --version flag
+        run: ./changelog-update --version
+
+      - name: Test --help flag
+        run: ./changelog-update --help
+
+      - name: Test with non-existent Claude CLI
+        run: |
+          cd test-repo
+          # This should fail gracefully when claude CLI is not available
+          ../changelog-update --tag v1.0.2 --skip-pull || true
