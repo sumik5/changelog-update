@@ -286,13 +286,13 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 以下の形式でCHANGELOGエントリーを生成してください（見出しレベル2から開始）:
 ## [%s] - %s
 
-### Added
+### 追加
 
 - 初回リリース
 - プロジェクトの主要な機能や特徴を箇条書きで記載
 
 注意事項：
-- 各セクションヘッダー（### Added など）の後には必ず空行を入れてください
+- 各セクションヘッダー（### 追加 など）の後には必ず空行を入れてください
 - Keep a Changelog (https://keepachangelog.com) の原則に従ってください
 - 前置きや説明文は一切含めないでください
 - CHANGELOGエントリー本文のみを出力してください
@@ -330,32 +330,32 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 ## [%s] - %s
 
 セクションは以下の順序で、該当する変更がある場合のみ記載してください：
-### Added
+### 追加
 
 - 新機能について記載
 
-### Changed
+### 変更
 
 - 既存機能への変更について記載
 
-### Deprecated
+### 非推奨
 
 - 間もなく削除される機能について記載
 
-### Removed
+### 削除
 
 - 削除された機能について記載
 
-### Fixed
+### 修正
 
 - 修正されたバグについて記載
 
-### Security
+### セキュリティ
 
 - 脆弱性に関する変更について記載
 
 注意事項：
-- 各セクションヘッダー（### Added など）の後には必ず空行を入れてください
+- 各セクションヘッダー（### 追加 など）の後には必ず空行を入れてください
 - Keep a Changelog (https://keepachangelog.com/ja/1.1.0/) の原則に従ってください
 - 人間が読みやすいことを最優先にしてください
 - 前置きや説明文は一切含めないでください
@@ -372,10 +372,6 @@ func generateChangelogEntry(executor AIExecutor, newTag, diff, commits, stagedDi
 		return "", err
 	}
 	
-	// Ensure the entry ends with a newline
-	if !strings.HasSuffix(result, "\n") {
-		result += "\n"
-	}
 	
 	return result, nil
 }
@@ -779,32 +775,32 @@ func generateChangelogEntryForTag(executor AIExecutor, tag, diff, commits string
 ## [%s] - %s
 
 セクションは以下の順序で、該当する変更がある場合のみ記載してください：
-### Added
+### 追加
 
 - 新機能について記載
 
-### Changed
+### 変更
 
 - 既存機能への変更について記載
 
-### Deprecated
+### 非推奨
 
 - 間もなく削除される機能について記載
 
-### Removed
+### 削除
 
 - 削除された機能について記載
 
-### Fixed
+### 修正
 
 - 修正されたバグについて記載
 
-### Security
+### セキュリティ
 
 - 脆弱性に関する変更について記載
 
 注意事項：
-- 各セクションヘッダー（### Added など）の後には必ず空行を入れてください
+- 各セクションヘッダー（### 追加 など）の後には必ず空行を入れてください
 - Keep a Changelog (https://keepachangelog.com/ja/1.1.0/) の原則に従ってください
 - 人間が読みやすいことを最優先にしてください
 - 前置きや説明文は一切含めないでください
@@ -820,10 +816,6 @@ func generateChangelogEntryForTag(executor AIExecutor, tag, diff, commits string
 		return "", err
 	}
 	
-	// Ensure the entry ends with a newline
-	if !strings.HasSuffix(result, "\n") {
-		result += "\n"
-	}
 	
 	return result, nil
 }

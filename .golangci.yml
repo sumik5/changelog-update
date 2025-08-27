@@ -1,11 +1,11 @@
 run:
   timeout: 5m
   tests: true
-  skip-dirs:
+  exclude-dirs:
     - vendor
     - .git
     - .github
-  skip-files:
+  exclude-files:
     - ".*_test\\.go$"
 
 linters:
@@ -63,7 +63,8 @@ linters-settings:
   goimports:
     local-prefixes: github.com/shivase/changelog
   govet:
-    check-shadowing: true
+    enable:
+      - shadow
   misspell:
     locale: US
   nakedret:
