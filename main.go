@@ -682,7 +682,7 @@ func catchUpMode(executor AIExecutor, changelogFile string) error {
 	for i, j := 0, len(missingTags)-1; i < j; i, j = i+1, j-1 {
 		missingTags[i], missingTags[j] = missingTags[j], missingTags[i]
 	}
-	
+
 	allEntries := make([]string, 0, len(missingTags))
 	for i, tag := range missingTags {
 		fmt.Printf("\n🔧 Processing %s (%d/%d)...\n", tag, i+1, len(missingTags))
