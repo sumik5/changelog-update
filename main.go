@@ -3,11 +3,13 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -256,12 +258,25 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Printf("\n✅ CHANGELOG.md updated successfully!\n")
+
+		// Update package.json version if it exists
+		if err := updatePackageJSONVersion(*newTag); err != nil {
+			fmt.Printf("⚠️  Warning: Failed to update package.json: %v\n", err)
+		}
+
 		fmt.Printf("📌 Next steps:\n")
 		fmt.Printf("  1. Review and edit CHANGELOG.md if needed\n")
 		fmt.Printf("  2. git add CHANGELOG.md\n")
-		fmt.Printf("  3. git commit -m \"docs: update changelog for %s\"\n", *newTag)
-		fmt.Printf("  4. git tag %s\n", *newTag)
-		fmt.Printf("  5. git push && git push --tags\n")
+		if _, err := os.Stat("package.json"); err == nil {
+			fmt.Printf("  3. git add package.json\n")
+			fmt.Printf("  4. git commit -m \"docs: update changelog for %s\"\n", *newTag)
+			fmt.Printf("  5. git tag %s\n", *newTag)
+			fmt.Printf("  6. git push && git push --tags\n")
+		} else {
+			fmt.Printf("  3. git commit -m \"docs: update changelog for %s\"\n", *newTag)
+			fmt.Printf("  4. git tag %s\n", *newTag)
+			fmt.Printf("  5. git push && git push --tags\n")
+		}
 	} else {
 		fmt.Println("\n⏹️ Update canceled.")
 		os.Exit(0)
@@ -913,4 +928,79 @@ func getTagDate(tag string) (string, error) {
 	}
 
 	return "", fmt.Errorf("invalid date format for tag %s", tag)
+}
+
+func updatePackageJSONVersion(tag string) error {
+	// Check if package.json exists
+	packageJSONPath := "package.json"
+	if _, err := os.Stat(packageJSONPath); os.IsNotExist(err) {
+		// No package.json, nothing to do
+		return nil
+	}
+
+	// Remove 'v' prefix from tag if present
+	version := strings.TrimPrefix(tag, "v")
+
+	// Read package.json
+	data, err := os.ReadFile(packageJSONPath)
+	if err != nil {
+		return fmt.Errorf("failed to read package.json: %w", err)
+	}
+
+	// Parse JSON
+	var packageData map[string]interface{}
+	if err := json.Unmarshal(data, &packageData); err != nil {
+		return fmt.Errorf("failed to parse package.json: %w", err)
+	}
+
+	// Update version
+	oldVersion, hasVersion := packageData["version"].(string)
+	if !hasVersion {
+		fmt.Println("📦 Adding version to package.json...")
+	} else if oldVersion != version {
+		fmt.Printf("📦 Updating package.json version from %s to %s...\n", oldVersion, version)
+	} else {
+		// Version is already up to date
+		return nil
+	}
+
+	packageData["version"] = version
+
+	// Marshal back to JSON with proper formatting
+	formattedJSON, err := json.MarshalIndent(packageData, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal package.json: %w", err)
+	}
+
+	// Write back to file
+	if err := os.WriteFile(packageJSONPath, append(formattedJSON, '\n'), 0o644); err != nil {
+		return fmt.Errorf("failed to write package.json: %w", err)
+	}
+
+	fmt.Println("✅ package.json version updated successfully!")
+	return nil
+}
+
+// findPackageJSON searches for package.json in current directory and parent directories
+func findPackageJSON() (string, error) {
+	currentDir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+
+	for {
+		packageJSONPath := filepath.Join(currentDir, "package.json")
+		if _, err := os.Stat(packageJSONPath); err == nil {
+			return packageJSONPath, nil
+		}
+
+		parent := filepath.Dir(currentDir)
+		if parent == currentDir {
+			// Reached root directory
+			break
+		}
+		currentDir = parent
+	}
+
+	return "", os.ErrNotExist
 }
